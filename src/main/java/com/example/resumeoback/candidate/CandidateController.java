@@ -53,7 +53,7 @@ public class CandidateController {
 
     private String sendToGemini(String prompt) {
         try {
-            String apiKey = "AIzaSyCgc4bVlHHX4Dlpfcv1sM3zr-j__SebTR0";
+            String apiKey = "";
             String requestBody = """
             {
               "contents": [{
