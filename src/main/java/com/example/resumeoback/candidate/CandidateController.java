@@ -1,5 +1,6 @@
 package com.example.resumeoback.candidate;
 
+import com.example.resumeoback.position.PositionController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -7,29 +8,29 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
+import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/candidates")
 @CrossOrigin(origins = "http://localhost:4200")
 public class CandidateController {
 
+    private final HttpClient httpClient = HttpClient.newHttpClient();
     private final List<Candidate> candidates = new ArrayList<>();
 
     public CandidateController() {
-        candidates.add(new Candidate(UUID.randomUUID().toString(), "John Doe", 85, "2023-10-01", "junior developer"));
-        candidates.add(new Candidate(UUID.randomUUID().toString(), "Jane Smith", 90, "2023-10-02", "senior developer"));
-        candidates.add(new Candidate(UUID.randomUUID().toString(), "Alice Johnson", 78, "2023-10-03", "project manager"));
+        PositionController positionController = new PositionController();
+        candidates.add(new Candidate(UUID.randomUUID().toString(), "John Doe", 85, "2023-10-01", positionController.getRandomPosition()));
+        candidates.add(new Candidate(UUID.randomUUID().toString(), "Jane Smith", 90, "2023-10-02", positionController.getRandomPosition()));
+        candidates.add(new Candidate(UUID.randomUUID().toString(), "Alice Johnson", 78, "2023-10-03", positionController.getRandomPosition()));
     }
 
     @GetMapping
@@ -53,7 +54,11 @@ public class CandidateController {
 
     private String sendToGemini(String prompt) {
         try {
-            String apiKey = "AIzaSyCgc4bVlHHX4Dlpfcv1sM3zr-j__SebTR0";
+            String apiKey = System.getenv("GEMINI_API_KEY"); // <-- ustaw zmienną środowiskową
+            if (apiKey == null || apiKey.isBlank()) {
+                return "{\"error\":\"Missing API key\"}";
+            }
+
             String requestBody = """
             {
               "contents": [{
@@ -66,13 +71,12 @@ public class CandidateController {
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey))
+                    .timeout(Duration.ofSeconds(10))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            HttpClient client = HttpClient.newHttpClient();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.body();
 
         } catch (Exception e) {
@@ -81,8 +85,11 @@ public class CandidateController {
     }
 
     @PostMapping("/upload")
-    public ResponseEntity<?> uploadAndExtractCandidate(@RequestParam("file") MultipartFile file) {
-        if (!file.getContentType().equals("application/pdf")) {
+    public ResponseEntity<?> uploadAndExtractCandidate(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("positionName") String positionName) {
+
+        if (!Objects.equals(file.getContentType(), "application/pdf")) {
             return ResponseEntity
                     .status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                     .body(Map.of("error", "Only PDF files are allowed"));
@@ -93,7 +100,7 @@ public class CandidateController {
             String extractedText = stripper.getText(document);
 
             String prompt = """
-                Przeanalizuj poniższy tekst CV i odpowiedz tylko w czystym JSON w następującym formacie:
+               Przeanalizuj przesłany tekst czyjegoś CV i znajdź w nim informację o Imieniu oraz naziwsku osoby, posłuży to jako pole name w wynikowym JSON, następnie oceń w skali 0-100 czy podany kandydat nadaje się na stanowisko %s, posłuży ta ocena później jako pole score w wynikowym JSON. Opowiedz w podanym formacie JSON. Nie podać nic poza JSON:
                 {
                   "name": "...",
                   "score": ...,
@@ -103,14 +110,33 @@ public class CandidateController {
 
                 Tekst CV:
                 %s
-            """.formatted(extractedText);
+            """.formatted(positionName, extractedText);
 
-            String response = sendToGemini(prompt);
+            String rawResponse = sendToGemini(prompt);
+
             ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> data = mapper.readValue(response, Map.class);
+            Map<?, ?> fullResponse = mapper.readValue(rawResponse, Map.class);
+
+            List<?> candidatesList = (List<?>) fullResponse.get("candidates");
+            if (candidatesList == null || candidatesList.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of("error", "No candidate response from Gemini"));
+            }
+
+            Map<?, ?> contentMap = (Map<?, ?>) ((Map<?, ?>) candidatesList.getFirst()).get("content");
+            List<?> partsList = (List<?>) contentMap.get("parts");
+            String textContent = (String) ((Map<?, ?>) partsList.getFirst()).get("text");
+
+            String cleanJson = textContent
+                    .replaceAll("(?s)```json\\s*", "")
+                    .replaceAll("(?s)```\\s*", "")
+                    .trim();
+
+            Map<String, Object> data = mapper.readValue(cleanJson, new TypeReference<>() {
+            });
 
             String name = (String) data.getOrDefault("name", "Nieznane imię");
-            String date = (String) data.getOrDefault("date", LocalDate.now().toString());
+            String date = LocalDate.now().toString();
             String appointment = (String) data.getOrDefault("appointment", "Nieznane stanowisko");
 
             Object scoreObj = data.get("score");
@@ -120,7 +146,8 @@ public class CandidateController {
             } else if (scoreObj instanceof String) {
                 try {
                     score = Integer.parseInt((String) scoreObj);
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
 
             Candidate candidate = new Candidate(
@@ -132,7 +159,6 @@ public class CandidateController {
             );
 
             candidates.add(candidate);
-
             return ResponseEntity.ok(candidate);
 
         } catch (IOException e) {
@@ -140,5 +166,4 @@ public class CandidateController {
                     .body(Map.of("error", "PDF/Gemini failed: " + e.getMessage()));
         }
     }
-
 }

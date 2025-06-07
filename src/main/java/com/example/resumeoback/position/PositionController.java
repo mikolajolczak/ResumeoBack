@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 @RestController
@@ -13,6 +14,15 @@ import java.util.UUID;
 public class PositionController {
 
     private final List<Position> positions = new ArrayList<>();
+
+    public String getRandomPosition() {
+        if (positions.isEmpty()) {
+            return "Brak dostępnych stanowisk";
+        }
+        Random random = new Random();
+        int index = random.nextInt(positions.size());
+        return positions.get(index).getName();
+    }
 
     public PositionController() {
         positions.add(new Position(UUID.randomUUID().toString(), "Junior Developer", 3, "2024-06-01"));
