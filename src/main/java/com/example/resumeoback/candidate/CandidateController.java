@@ -100,12 +100,16 @@ public class CandidateController {
             String extractedText = stripper.getText(document);
 
             String prompt = """
-               Przeanalizuj przesłany tekst czyjegoś CV i znajdź w nim informację o Imieniu oraz naziwsku osoby, posłuży to jako pole name w wynikowym JSON, następnie oceń w skali 0-100 czy podany kandydat nadaje się na stanowisko %s, posłuży ta ocena później jako pole score w wynikowym JSON. Opowiedz w podanym formacie JSON. Nie podać nic poza JSON:
+               Przeanalizuj przesłany tekst czyjegoś CV i znajdź w nim informację o Imieniu oraz naziwsku osoby, posłuży to jako pole name w wynikowym JSON, następnie oceń w skali 0-100 czy podany kandydat nadaje się na stanowisko %s, posłuży ta ocena później jako pole score w wynikowym JSON. Następnie dodatkowo w polu competences określ kluczowe kompetencje związane z stanowiskiem, w polu standout cechy wyróżniające kandydata. Finalnie opisz 3 plusy w polu pros i 3 minusy w polu cons związane z kanydatem po przecinku. Opowiedz w podanym formacie JSON. Nie podać nic poza JSON. Nie używaj list jedynie proste String. Odpowiadaj tylko po polsku:
                 {
                   "name": "...",
                   "score": ...,
                   "date": "...",
-                  "appointment": "..."
+                  "appointment": "...",
+                  "competences": "...",
+                  "standout": "...",
+                  "pros": "...",
+                  "cons": "..."
                 }
 
                 Tekst CV:
@@ -138,6 +142,11 @@ public class CandidateController {
             String name = (String) data.getOrDefault("name", "Nieznane imię");
             String date = LocalDate.now().toString();
             String appointment = (String) data.getOrDefault("appointment", "Nieznane stanowisko");
+            String competences = (String) data.getOrDefault("competences", "Brak informacji");
+            String standout = (String) data.getOrDefault("standout", "Brak informacji");
+            String pros = (String) data.getOrDefault("pros", "Brak informacji");
+            String cons = (String) data.getOrDefault("cons", "Brak informacji");
+
 
             Object scoreObj = data.get("score");
             int score = 0;
@@ -155,13 +164,19 @@ public class CandidateController {
                     name,
                     score,
                     date,
-                    appointment
+                    appointment,
+                    competences,
+                    standout,
+                    pros,
+                    cons
+
+
             );
 
             candidates.add(candidate);
             return ResponseEntity.ok(candidate);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "PDF/Gemini failed: " + e.getMessage()));
         }
